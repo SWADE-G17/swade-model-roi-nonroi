@@ -47,19 +47,18 @@ import glob
 # CONFIGURACION - EDITA ESTAS VARIABLES
 # ============================================================
 
-# Carpeta raiz con las imagenes DICOM organizadas en AD/, MCI/, CN/
+# 1. La carpeta raíz donde están tus carpetas de clases (CN, AD, etc.)
 INPUT_DIR = r"C:\alzheimer_data\dicom"
 
-# Carpeta donde se guardaran los .nii.gz convertidos
+# 2. La carpeta raíz donde quieres que se guarden los resultados
 OUTPUT_DIR = r"C:\alzheimer_data\raw"
 
-# Ruta al ejecutable dcm2niix
-# Si lo agregaste al PATH, solo pon "dcm2niix"
-# Si no, pon la ruta completa, ej: r"C:\dcm2niix\dcm2niix.exe"
-DCM2NIIX_PATH = "dcm2niix"
+# 3. Solo procesaremos la carpeta CN
+CLASSES = ["CN"]
 
-# Clases a procesar
-CLASSES = ["AD", "MCI", "CN"]
+# 4. Ruta exacta al ejecutable que descargaste (ajusta si el .exe tiene otro nombre)
+
+DCM2NIIX_PATH = r"C:\Users\juanf\Downloads\dcm2niix_win\dcm2niix.exe"
 
 # ============================================================
 # NO MODIFICAR LO DE ABAJO

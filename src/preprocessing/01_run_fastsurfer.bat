@@ -70,7 +70,7 @@ set TOTAL=0
 set ERRORS=0
 
 REM Procesar cada clase
-for %%C in (AD MCI CN) do (
+for %%C in (CN) do (
     echo.
     echo --- Procesando clase: %%C ---
     echo.
@@ -131,7 +131,7 @@ if exist "%SUBJ_OUT%\%SUBJ_ID%\mri\aparc.DKTatlas+aseg.deep.mgz" (
 echo [INICIO] Procesando: %CLASS%\%SUBJ_ID%
 
 REM Llamar a FastSurfer via Docker
-docker run --rm --gpus all ^
+docker run --rm --user root --gpus all ^
   -v "%SUBJ_INPUT_DIR%":/data_in ^
   -v "%SUBJ_OUT%":/data_out ^
   -v "%FS_LICENSE%":/fs_license.txt ^
@@ -141,7 +141,8 @@ docker run --rm --gpus all ^
   --sd /data_out ^
   --fs_license /fs_license.txt ^
   --seg_only ^
-  --no_cereb
+  --no_cereb ^
+  --allow_root
 
 if errorlevel 1 (
     echo [ERROR] Fallo el procesamiento de: %CLASS%\%SUBJ_ID%
