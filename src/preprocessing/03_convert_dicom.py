@@ -54,7 +54,7 @@ INPUT_DIR = r"C:\alzheimer_data\dicom"
 OUTPUT_DIR = r"C:\alzheimer_data\raw"
 
 # 3. Solo procesaremos la carpeta CN
-CLASSES = ["CN"]
+CLASSES = ["MCI"]
 
 # 4. Ruta exacta al ejecutable que descargaste (ajusta si el .exe tiene otro nombre)
 
