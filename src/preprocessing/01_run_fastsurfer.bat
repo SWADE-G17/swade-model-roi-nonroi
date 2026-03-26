@@ -70,7 +70,7 @@ set TOTAL=0
 set ERRORS=0
 
 REM Procesar cada clase
-for %%C in (MCI) do (
+for %%C in (AD) do (
     echo.
     echo --- Procesando clase: %%C ---
     echo.
