@@ -38,7 +38,7 @@ from sklearn.utils.class_weight import compute_class_weight
 
 from model.resnet3d_cbam import Resnet3DBuilder
 from reading.data_loader import load_dataset, data_generator, balance_binary_dataset, prepare_ovr_dataset
-
+os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
 # ============================================================
 # CONFIGURACION - EDITA ESTAS VARIABLES ANTES DE CORRER
 # ============================================================
@@ -71,7 +71,7 @@ MODEL_FILENAME = "model_ADNI_" + TASK + ".h5"
 TARGET_SHAPE = (100, 100, 100)
 
 # Numero de imagenes por batch (reducir a 4 si hay problemas de memoria GPU)
-BATCH_SIZE = 10
+BATCH_SIZE = 2
 
 # Numero de epocas de entrenamiento
 NUM_EPOCHS = 100
