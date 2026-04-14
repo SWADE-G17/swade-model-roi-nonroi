@@ -52,11 +52,20 @@ NOTA PARA MAC M4:
 """
 
 import argparse
+import glob
 import os
 import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+INFERENCE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _find_default_model():
+    """Return the first .h5 file found in the inference/ directory, or None."""
+    candidates = glob.glob(os.path.join(INFERENCE_DIR, "*.h5"))
+    return candidates[0] if candidates else None
 
 
 # ============================================================
@@ -91,20 +100,29 @@ def preprocess_subject(aseg_path, orig_path, target_shape=(100, 100, 100)):
 # Prediccion - Modo binario
 # ============================================================
 
-def predict_binary(aseg_path, orig_path, model_path,
+def predict_binary(aseg_path, orig_path, model_path=None,
                    target_shape=(100, 100, 100), class_names=None):
     """
     Prediccion con un solo modelo binario.
+
+    If *model_path* is ``None``, the first ``.h5`` file found in the
+    ``inference/`` directory is used automatically.
 
     Returns:
         dict con predicted_class, predicted_name, probabilities, class_names
     """
     import tensorflow as tf
 
+    if model_path is None:
+        model_path = _find_default_model()
+        if model_path is None:
+            print("\nERROR: No se encontro ningun archivo .h5 en inference/")
+            sys.exit(1)
+
     if class_names is None:
         class_names = ["Clase 0", "Clase 1"]
 
-    print("\nCargando modelo...")
+    print(f"\nCargando modelo: {os.path.basename(model_path)}")
     try:
         model = tf.keras.models.load_model(model_path, compile=False)
     except Exception as e:
@@ -296,7 +314,11 @@ def main():
     )
 
     # Modelos - modo binary
-    parser.add_argument("--model", help="Ruta al modelo .h5 (modo binary)")
+    parser.add_argument(
+        "--model", default=None,
+        help="Ruta al modelo .h5 (modo binary). Si se omite, se usa el\n"
+             "primer .h5 encontrado en la carpeta inference/"
+    )
     parser.add_argument(
         "--classes", default="AD,MCI",
         help="Nombres de clases para modo binary (default: AD,MCI)"
@@ -351,10 +373,6 @@ def main():
             target_shape,
         )
     else:
-        if not args.model:
-            print("\nERROR: En modo binary debes especificar --model")
-            sys.exit(1)
-
         class_names = [c.strip() for c in args.classes.split(",")]
         result = predict_binary(aseg_path, orig_path, args.model, target_shape, class_names)
 
@@ -366,7 +384,7 @@ def main():
             print("NOTA: Grad-CAM en modo OvR muestra el mapa del modelo AD.")
             model_path = args.model_ad
         else:
-            model_path = args.model
+            model_path = args.model or _find_default_model()
 
         print("Generando Grad-CAM...")
         from explainability.gradcam import run_gradcam_on_subject

@@ -1,0 +1,3 @@
+"""Stub for javaobj (PyPI: javaobj-py3)."""
+
+def loads(data: bytes) -> object: ...
