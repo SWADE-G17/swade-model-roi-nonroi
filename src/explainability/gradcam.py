@@ -192,7 +192,8 @@ def visualize_gradcam_slices(image_array, heatmap, class_names=None,
 
 
 def run_gradcam_on_subject(model_path, aseg_path, orig_path,
-                            class_names=None, save_path=None):
+                            class_names=None, save_path=None,
+                            gradcam_class_idx=None):
     """
     Funcion de alto nivel: carga el modelo, preprocesa la imagen,
     calcula Grad-CAM y visualiza el resultado.
@@ -203,6 +204,8 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
         orig_path: ruta al orig.mgz
         class_names: lista con nombres de clases, ej: ["AD", "MCI"]
         save_path: si se especifica, guarda la figura
+        gradcam_class_idx: indice de clase para el mapa (ej. 1 en modelos OvR
+            para la clase positiva). None = usar la clase predicha (argmax).
 
     Returns:
         heatmap, predicted_class, probabilities
@@ -211,6 +214,8 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
     import os
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+    from inference.model_loading import load_model_for_inference
+
     import nibabel
     from skimage.transform import resize
     from utils.image_processing import apply_mask, enhance_image, sharpen_image
@@ -218,7 +223,7 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
     TARGET_SHAPE = (100, 100, 100)
 
     print("Cargando modelo...")
-    model = tf.keras.models.load_model(model_path, compile=False)
+    model = load_model_for_inference(model_path, target_shape=TARGET_SHAPE, compile=False)
 
     print("Preprocesando imagen...")
     aseg_image = nibabel.load(aseg_path)
@@ -233,19 +238,29 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
     image_batch = np.expand_dims(image_batch, axis=-1)
 
     print("Calculando Grad-CAM...")
-    heatmap, predicted_class, probabilities = compute_gradcam_3d(model, image_batch)
+    heatmap, predicted_class, probabilities = compute_gradcam_3d(
+        model, image_batch, class_idx=gradcam_class_idx
+    )
 
     if class_names is None:
         class_names = [f"Clase {i}" for i in range(len(probabilities))]
 
-    print(f"\nDiagnostico: {class_names[predicted_class]} ({probabilities[predicted_class]*100:.1f}%)")
+    display_class = (
+        gradcam_class_idx if gradcam_class_idx is not None else predicted_class
+    )
+    display_class = int(np.clip(display_class, 0, len(class_names) - 1))
+
+    print(
+        f"\nGrad-CAM (clase explicada): {class_names[display_class]} "
+        f"({probabilities[display_class]*100:.1f}%)"
+    )
     for i, (name, prob) in enumerate(zip(class_names, probabilities)):
         print(f"  {name}: {prob*100:.1f}%")
 
     visualize_gradcam_slices(
         image_batch, heatmap,
         class_names=class_names,
-        predicted_class=predicted_class,
+        predicted_class=display_class,
         probabilities=probabilities,
         save_path=save_path,
     )

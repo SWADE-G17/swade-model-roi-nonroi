@@ -22,10 +22,10 @@ REM CONFIGURACION - EDITA ESTAS 3 LINEAS ANTES DE EJECUTAR
 REM ==============================================================================
 
 REM Carpeta donde estan tus .nii.gz organizados en AD/, MCI/, CN/
-set RAW_DIR=C:\alzheimer_data\raw
+set RAW_DIR=C:\Users\Harry\Documents\GitHub\Images\ADNI\Nifti
 
 REM Carpeta donde se guardara la salida de FastSurfer
-set OUTPUT_DIR=C:\alzheimer_data\processed
+set OUTPUT_DIR=C:\Users\Harry\Documents\GitHub\Images\ADNI\Processed
 
 REM Ruta a tu archivo license.txt de FreeSurfer
 set FS_LICENSE=C:\fastsurfer_license\license.txt
@@ -131,7 +131,7 @@ if exist "%SUBJ_OUT%\%SUBJ_ID%\mri\aparc.DKTatlas+aseg.deep.mgz" (
 echo [INICIO] Procesando: %CLASS%\%SUBJ_ID%
 
 REM Llamar a FastSurfer via Docker
-docker run --rm --gpus all ^
+docker run --rm --gpus all --user root ^
   -v "%SUBJ_INPUT_DIR%":/data_in ^
   -v "%SUBJ_OUT%":/data_out ^
   -v "%FS_LICENSE%":/fs_license.txt ^
@@ -140,8 +140,8 @@ docker run --rm --gpus all ^
   --sid %SUBJ_ID% ^
   --sd /data_out ^
   --fs_license /fs_license.txt ^
-  --seg_only ^
-  --no_cereb
+  --no_cereb ^
+  --allow_root
 
 if errorlevel 1 (
     echo [ERROR] Fallo el procesamiento de: %CLASS%\%SUBJ_ID%

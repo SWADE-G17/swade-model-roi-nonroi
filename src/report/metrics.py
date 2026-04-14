@@ -32,6 +32,8 @@ from sklearn.metrics import (
     roc_auc_score, accuracy_score
 )
 
+from inference.model_loading import load_model_for_inference
+
 
 CLASS_NAMES = {
     "AD_vs_MCI": ["AD", "MCI"],
@@ -185,7 +187,7 @@ def evaluate_model(model_path, base_dir, task="AD_vs_MCI",
     class_names = CLASS_NAMES[task]
 
     print(f"\nCargando modelo: {model_path}")
-    model = tf.keras.models.load_model(model_path, compile=False)
+    model = load_model_for_inference(model_path, target_shape=target_shape, compile=False)
 
     # Cargar datos
     paths_by_class = {}

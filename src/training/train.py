@@ -45,7 +45,7 @@ from reading.data_loader import load_dataset, data_generator, balance_binary_dat
 
 # Ruta a los datos procesados por FastSurfer
 # Debe contener subcarpetas AD/, MCI/, CN/ con los sujetos procesados
-BASE_DIR = r"C:\alzheimer_data\processed"
+BASE_DIR = r"C:\Users\Harry\Desktop\processed"
 
 # Tipo de clasificacion. Opciones:
 #
@@ -71,7 +71,7 @@ MODEL_FILENAME = "model_ADNI_" + TASK + ".h5"
 TARGET_SHAPE = (100, 100, 100)
 
 # Numero de imagenes por batch (reducir a 4 si hay problemas de memoria GPU)
-BATCH_SIZE = 10
+BATCH_SIZE = 1
 
 # Numero de epocas de entrenamiento
 NUM_EPOCHS = 100

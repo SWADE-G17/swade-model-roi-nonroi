@@ -48,15 +48,15 @@ import glob
 # ============================================================
 
 # Carpeta raiz con las imagenes DICOM organizadas en AD/, MCI/, CN/
-INPUT_DIR = r"C:\alzheimer_data\dicom"
+INPUT_DIR = r"C:\Users\Harry\Documents\GitHub\Images\ADNI\Raw"
 
 # Carpeta donde se guardaran los .nii.gz convertidos
-OUTPUT_DIR = r"C:\alzheimer_data\raw"
+OUTPUT_DIR = r"C:\Users\Harry\Documents\GitHub\Images\ADNI\Nifti"
 
 # Ruta al ejecutable dcm2niix
 # Si lo agregaste al PATH, solo pon "dcm2niix"
 # Si no, pon la ruta completa, ej: r"C:\dcm2niix\dcm2niix.exe"
-DCM2NIIX_PATH = "dcm2niix"
+DCM2NIIX_PATH = r"C:\dcm2niix\dcm2niix.exe"
 
 # Clases a procesar
 CLASSES = ["AD", "MCI", "CN"]

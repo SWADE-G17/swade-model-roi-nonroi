@@ -52,11 +52,14 @@ NOTA PARA MAC M4:
 """
 
 import argparse
+import gc
 import os
 import sys
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from inference.model_loading import load_model_for_inference
 
 
 # ============================================================
@@ -99,14 +102,14 @@ def predict_binary(aseg_path, orig_path, model_path,
     Returns:
         dict con predicted_class, predicted_name, probabilities, class_names
     """
-    import tensorflow as tf
-
     if class_names is None:
         class_names = ["Clase 0", "Clase 1"]
 
     print("\nCargando modelo...")
     try:
-        model = tf.keras.models.load_model(model_path, compile=False)
+        model = load_model_for_inference(
+            model_path, target_shape=target_shape, compile=False
+        )
     except Exception as e:
         print(f"\nERROR al cargar el modelo: {e}")
         sys.exit(1)
@@ -148,22 +151,22 @@ def predict_ovr(aseg_path, orig_path,
 
     El diagnostico final es la clase con mayor probabilidad de ser "positiva".
 
+    Los modelos se cargan y ejecutan uno a la vez (clear_session entre cada uno)
+    para reducir el pico de memoria en GPU frente a mantener los 3 grafos en VRAM.
+
     Returns:
         dict con predicted_class, predicted_name, probabilities, class_names
     """
     import tensorflow as tf
 
-    print("\nCargando los 3 modelos OvR...")
-    models = {}
-    for name, path in [("AD", model_ad_path), ("MCI", model_mci_path), ("CN", model_cn_path)]:
+    model_paths = [
+        ("AD", model_ad_path),
+        ("MCI", model_mci_path),
+        ("CN", model_cn_path),
+    ]
+    for name, path in model_paths:
         if not os.path.exists(path):
             print(f"\nERROR: No se encontro el modelo {name}: {path}")
-            sys.exit(1)
-        try:
-            models[name] = tf.keras.models.load_model(path, compile=False)
-            print(f"  [{name}] cargado: {os.path.basename(path)}")
-        except Exception as e:
-            print(f"\nERROR al cargar modelo {name}: {e}")
             sys.exit(1)
 
     print("Preprocesando imagen (una sola vez para los 3 modelos)...")
@@ -173,13 +176,23 @@ def predict_ovr(aseg_path, orig_path,
         print(f"\nERROR al preprocesar la imagen: {e}")
         sys.exit(1)
 
-    print("Realizando 3 predicciones...")
-    # prob_positive = probabilidad de que pertenezca a esa clase (indice 1)
+    print("Realizando 3 predicciones (un modelo en GPU a la vez)...")
     ovr_probs = {}
-    for name, model in models.items():
-        probs = model.predict(image, verbose=0)[0]
-        ovr_probs[name] = float(probs[1])  # prob de ser la clase positiva
-        print(f"  P({name}) = {ovr_probs[name]*100:.1f}%")
+    for name, path in model_paths:
+        model = None
+        try:
+            print(f"  [{name}] cargando {os.path.basename(path)}...")
+            model = load_model_for_inference(path, target_shape=target_shape, compile=False)
+            probs = model.predict(image, verbose=0)[0]
+            ovr_probs[name] = float(probs[1])
+            print(f"  P({name}) = {ovr_probs[name]*100:.1f}%")
+        except Exception as e:
+            print(f"\nERROR al cargar o ejecutar modelo {name}: {e}")
+            sys.exit(1)
+        finally:
+            del model
+            tf.keras.backend.clear_session()
+            gc.collect()
 
     # Normalizar las 3 probabilidades para que sumen 1 (mas interpretable)
     total = sum(ovr_probs.values())
@@ -360,21 +373,36 @@ def main():
 
     print_result(result)
 
-    # Grad-CAM opcional (solo modo binary)
+    # Grad-CAM opcional
     if args.gradcam:
-        if args.mode == "ovr":
-            print("NOTA: Grad-CAM en modo OvR muestra el mapa del modelo AD.")
-            model_path = args.model_ad
-        else:
-            model_path = args.model
-
-        print("Generando Grad-CAM...")
         from explainability.gradcam import run_gradcam_on_subject
-        run_gradcam_on_subject(
-            model_path, aseg_path, orig_path,
-            class_names=result["class_names"],
-            save_path=args.save_gradcam,
-        )
+
+        if args.mode == "ovr":
+            winner = result["predicted_name"]
+            ovr_paths = {
+                "AD": args.model_ad,
+                "MCI": args.model_mci,
+                "CN": args.model_cn,
+            }
+            model_path = ovr_paths[winner]
+            gc_names = ["rest", winner]
+            print(
+                f"\nGrad-CAM: modelo OvR de {winner} "
+                "(mapa respecto a la clase positiva frente al resto)."
+            )
+            run_gradcam_on_subject(
+                model_path, aseg_path, orig_path,
+                class_names=gc_names,
+                save_path=args.save_gradcam,
+                gradcam_class_idx=1,
+            )
+        else:
+            print("\nGenerando Grad-CAM...")
+            run_gradcam_on_subject(
+                args.model, aseg_path, orig_path,
+                class_names=result["class_names"],
+                save_path=args.save_gradcam,
+            )
 
 
 if __name__ == "__main__":
