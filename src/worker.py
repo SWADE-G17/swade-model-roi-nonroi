@@ -66,7 +66,7 @@ MINIO_INPUT_BUCKET = os.environ.get("MINIO_INPUT_BUCKET", "mri-files")
 MINIO_HEATMAP_BUCKET = os.environ.get("MINIO_HEATMAP_BUCKET", "heatmaps")
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
+SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ["SUPABASE_ANON_KEY"]
 
 FASTSURFER_LICENSE = os.environ.get(
     "FASTSURFER_LICENSE", r"C:\fastsurfer_license\license.txt"
@@ -115,7 +115,7 @@ minio_client = MinIOClient(
 
 supabase_client = SupabaseClient(
     url=SUPABASE_URL,
-    anon_key=SUPABASE_ANON_KEY,
+    anon_key=SUPABASE_KEY,
 )
 
 
