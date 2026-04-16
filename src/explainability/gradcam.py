@@ -187,7 +187,7 @@ def visualize_gradcam_slices(image_array, heatmap, class_names=None,
         plt.savefig(save_path, dpi=150, bbox_inches="tight")
         print(f"Grad-CAM guardado en: {save_path}")
 
-    plt.show()
+    plt.close(fig)
     return fig
 
 

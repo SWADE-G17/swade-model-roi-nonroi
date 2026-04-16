@@ -78,11 +78,26 @@ FASTSURFER_USE_GPU = os.environ.get("FASTSURFER_USE_GPU", "false").lower() in (
     "1", "true", "yes",
 )
 
+MODEL_MODE = os.environ.get("MODEL_MODE", "binary").lower()
+
 MODEL_PATH = os.path.join(
     SRC_DIR,
     os.environ.get("MODEL_PATH", os.path.join("inference", "model_ADNI_CN_vs_rest.h5")),
 )
 MODEL_CLASSES = os.environ.get("MODEL_CLASSES", "rest,CN").split(",")
+
+MODEL_AD_PATH = os.path.join(
+    SRC_DIR,
+    os.environ.get("MODEL_AD_PATH", os.path.join("inference", "model_ADNI_AD_vs_rest.h5")),
+)
+MODEL_MCI_PATH = os.path.join(
+    SRC_DIR,
+    os.environ.get("MODEL_MCI_PATH", os.path.join("inference", "model_ADNI_MCI_vs_rest.h5")),
+)
+MODEL_CN_PATH = os.path.join(
+    SRC_DIR,
+    os.environ.get("MODEL_CN_PATH", os.path.join("inference", "model_ADNI_CN_vs_rest.h5")),
+)
 
 # ---------------------------------------------------------------------------
 # Service clients (initialised once at module level)
@@ -144,6 +159,8 @@ def run_fastsurfer(input_nii_path: str, output_dir: str, subject_id: str) -> str
         cmd,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=7200,  # 2 h ceiling
     )
 
@@ -172,6 +189,32 @@ def run_fastsurfer(input_nii_path: str, output_dir: str, subject_id: str) -> str
 _JAVA_SERIAL_MAGIC = b"\xac\xed"
 
 
+def _to_native(obj: Any) -> Any:
+    """Recursively convert Java-typed values (from javaobj) to native Python."""
+    type_name = type(obj).__name__
+    if isinstance(obj, (bool, int, float, str, type(None))):
+        return obj
+    if type_name in ("JavaInt", "JavaShort", "JavaByte"):
+        return int(obj)
+    if type_name in ("JavaLong",):
+        return int(obj)
+    if type_name in ("JavaFloat", "JavaDouble"):
+        return float(obj)
+    if type_name == "JavaBoolean":
+        return bool(obj)
+    if type_name == "JavaString":
+        return str(obj)
+    if isinstance(obj, dict):
+        return {str(k): _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_native(v) for v in obj]
+    try:
+        return int(obj)
+    except (TypeError, ValueError):
+        pass
+    return str(obj)
+
+
 def _deserialize_body(body: bytes) -> dict:
     """Decode the message body into a Python dict.
 
@@ -192,11 +235,11 @@ def _deserialize_body(body: bytes) -> dict:
         return json.loads(java_obj)
 
     if isinstance(java_obj, dict):
-        return {str(k): v for k, v in java_obj.items()}
+        return {str(k): _to_native(v) for k, v in java_obj.items()}
 
     if hasattr(java_obj, "__dict__"):
         raw = {
-            k: v for k, v in vars(java_obj).items()
+            k: _to_native(v) for k, v in vars(java_obj).items()
             if not k.startswith("_")
         }
         if raw:
@@ -305,18 +348,27 @@ def process_message(body: bytes) -> None:
         orig_path = os.path.join(mri_dir, "orig.mgz")
 
         # ---- 3. Prediction ----
-        from inference.predict import predict_binary
+        from inference.predict import predict_binary, predict_ovr
 
         try:
-            result = predict_binary(
-                aseg_path,
-                orig_path,
-                MODEL_PATH,
-                class_names=list(MODEL_CLASSES),
-            )
+            if MODEL_MODE == "ovr":
+                result = predict_ovr(
+                    aseg_path,
+                    orig_path,
+                    MODEL_AD_PATH,
+                    MODEL_MCI_PATH,
+                    MODEL_CN_PATH,
+                )
+            else:
+                result = predict_binary(
+                    aseg_path,
+                    orig_path,
+                    MODEL_PATH,
+                    class_names=list(MODEL_CLASSES),
+                )
         except SystemExit as exc:
             raise RuntimeError(
-                f"predict_binary terminated (exit code {exc.code})"
+                f"predict terminated (exit code {exc.code})"
             ) from exc
 
         prediction_payload = {
@@ -326,6 +378,8 @@ def process_message(body: bytes) -> None:
             "class_names": list(result["class_names"]),
             "mode": str(result["mode"]),
         }
+        if "raw_ovr" in result:
+            prediction_payload["raw_ovr"] = result["raw_ovr"]
         logger.info(
             "Prediction: %s (probs=%s)",
             prediction_payload["predicted_name"],
@@ -337,10 +391,11 @@ def process_message(body: bytes) -> None:
         try:
             from explainability.gradcam import run_gradcam_on_subject
 
+            gradcam_model = MODEL_AD_PATH if MODEL_MODE == "ovr" else MODEL_PATH
             heatmap_local = os.path.join(temp_dir, f"{estudio_id}_heatmap.png")
             try:
                 run_gradcam_on_subject(
-                    MODEL_PATH,
+                    gradcam_model,
                     aseg_path,
                     orig_path,
                     class_names=result["class_names"],
@@ -396,7 +451,10 @@ def main() -> None:
     logger.info("RabbitMQ : %s:%s  queue=%s", RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_QUEUE)
     logger.info("MinIO    : %s  input=%s  heatmaps=%s", MINIO_ENDPOINT, MINIO_INPUT_BUCKET, MINIO_HEATMAP_BUCKET)
     logger.info("Supabase : %s", SUPABASE_URL)
-    logger.info("Model    : %s  classes=%s", MODEL_PATH, MODEL_CLASSES)
+    if MODEL_MODE == "ovr":
+        logger.info("Model(OvR): AD=%s  MCI=%s  CN=%s", MODEL_AD_PATH, MODEL_MCI_PATH, MODEL_CN_PATH)
+    else:
+        logger.info("Model    : %s  classes=%s", MODEL_PATH, MODEL_CLASSES)
     logger.info("GPU      : %s", "enabled" if FASTSURFER_USE_GPU else "disabled (CPU only)")
     logger.info("=" * 60)
 
