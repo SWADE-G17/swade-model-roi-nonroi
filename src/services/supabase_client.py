@@ -57,6 +57,23 @@ class SupabaseClient:
         response.raise_for_status()
         logger.info("Upserted resultado for estudio_id=%s", estudio_id)
 
+    def update_estudio_status(self, estudio_id: Any, status: str) -> None:
+        """PATCH a row in ``public.estudio`` by primary key ``id``.
+
+        ``status`` must satisfy ``chk_estudio_status`` (e.g. ``procesando``,
+        ``listo``, ``error``).
+        """
+        url = f"{self._base_url}/rest/v1/estudio?id=eq.{estudio_id}"
+        headers = {**self._headers, "Prefer": "return=minimal"}
+        response = httpx.patch(
+            url,
+            json={"status": status},
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        response.raise_for_status()
+        logger.info("Updated estudio id=%s status=%s", estudio_id, status)
+
     def update_resultado_error(
         self,
         estudio_id: Any,
