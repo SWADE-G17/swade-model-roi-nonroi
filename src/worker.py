@@ -331,6 +331,8 @@ def process_message(body: bytes) -> None:
         object_key,
     )
 
+    supabase_client.update_estudio_status(estudio_id, "procesando")
+
     temp_dir = tempfile.mkdtemp(prefix="mri_worker_")
     try:
         # ---- 1. Download from MinIO ----
