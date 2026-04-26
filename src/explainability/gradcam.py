@@ -14,20 +14,25 @@ efectivamente se enfoca en las 6 ROIs (hipocampo, sustancia blanca)
 y no en regiones irrelevantes.
 
 USO:
-    from explainability.gradcam import compute_gradcam_3d, visualize_gradcam_slices
+    from explainability.gradcam import compute_gradcam_3d, visualize_gradcam_slices, save_gradcam_volume
 
-    heatmap = compute_gradcam_3d(model, image_array, class_idx=0)
+    heatmap, pred, probs = compute_gradcam_3d(model, image_array, class_idx=0)
     visualize_gradcam_slices(image_array, heatmap, save_path="gradcam.png")
+    save_gradcam_volume(heatmap, "gradcam.nii.gz", reference_img="orig.mgz")
 
 REFERENCIAS:
     - Selvaraju et al. (2017) "Grad-CAM: Visual Explanations from Deep Networks"
     - Adaptado a 3D para volumenes MRI
 """
 
+from typing import Any, cast
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import tensorflow as tf
+
+keras: Any = tf.keras  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def get_last_conv_layer_name(model):
@@ -42,7 +47,7 @@ def get_last_conv_layer_name(model):
     """
     last_conv = None
     for layer in model.layers:
-        if isinstance(layer, tf.keras.layers.Conv3D):
+        if isinstance(layer, keras.layers.Conv3D):
             last_conv = layer.name
     if last_conv is None:
         raise ValueError("No se encontro ninguna capa Conv3D en el modelo.")
@@ -70,7 +75,7 @@ def compute_gradcam_3d(model, image_array, class_idx=None, conv_layer_name=None)
         conv_layer_name = get_last_conv_layer_name(model)
 
     # Modelo que da los feature maps de la capa conv + la prediccion final
-    grad_model = tf.keras.models.Model(
+    grad_model = keras.models.Model(
         inputs=model.inputs,
         outputs=[model.get_layer(conv_layer_name).output, model.output],
     )
@@ -191,8 +196,83 @@ def visualize_gradcam_slices(image_array, heatmap, class_names=None,
     return fig
 
 
+def save_gradcam_volume(heatmap, output_path, reference_img=None, affine=None):
+    """
+    Guarda el mapa Grad-CAM 3D como volumen NIfTI (.nii, .nii.gz) o FreeSurfer (.mgz, .mgh).
+
+    Args:
+        heatmap: array 3D (D, H, W), valores tipicamente en [0, 1] tras compute_gradcam_3d.
+        output_path: ruta de salida; la extension determina el formato (.nii.gz, .nii, .mgz, .mgh).
+        reference_img: opcional. Ruta a un volumen nibabel o objeto Nifti1Image/MGHImage.
+                       Si se pasa, se copia el affine y, si las dimensiones no coinciden,
+                       se reescala el heatmap a la rejilla del volumen de referencia.
+        affine: matriz 4x4 opcional. Solo se usa si reference_img es None.
+                  Si ambos son None, se usa np.eye(4) (espacio anonimo, 1 mm voxels).
+
+    Returns:
+        La ruta output_path.
+    """
+    import os
+
+    import nibabel as nib
+    from nibabel.freesurfer.mghformat import MGHImage
+    from nibabel.spatialimages import SpatialImage
+
+    path_lower = output_path.lower()
+    if path_lower.endswith(".nii.gz") or path_lower.endswith(".nii"):
+        fmt = "nifti"
+    elif path_lower.endswith(".mgz") or path_lower.endswith(".mgh"):
+        fmt = "mgh"
+    else:
+        raise ValueError(
+            "Extension no soportada. Use .nii, .nii.gz, .mgz o .mgh; recibido: "
+            + os.path.basename(output_path)
+        )
+
+    h = np.asarray(heatmap, dtype=np.float32)
+    if h.ndim != 3:
+        raise ValueError(f"heatmap debe ser 3D (D,H,W); forma recibida: {h.shape}")
+
+    ref_affine = np.eye(4, dtype=np.float64)
+    if reference_img is not None:
+        if isinstance(reference_img, str):
+            reference_img = nib.load(reference_img)
+        ref_img = cast(SpatialImage, reference_img)
+        ref_img_affine = ref_img.affine
+        if ref_img_affine is None:
+            raise ValueError(
+                "reference_img no tiene un affine valido; no se puede preservar la geometria."
+            )
+        ref_affine = ref_img_affine.copy()
+        ref_data = np.asarray(ref_img.dataobj)
+        if ref_data.ndim == 4 and ref_data.shape[-1] == 1:
+            ref_data = ref_data[..., 0]
+        if ref_data.ndim != 3:
+            raise ValueError(
+                "reference_img debe ser un volumen 3D o 4D con un solo canal en el ultimo eje; "
+                f"forma: {np.asarray(ref_img.dataobj).shape}"
+            )
+        ref_shape = ref_data.shape
+        if h.shape != ref_shape:
+            h = np.asarray(resize_heatmap_3d(h, ref_shape), dtype=np.float32)
+    elif affine is not None:
+        ref_affine = np.asarray(affine, dtype=np.float64)
+        if ref_affine.shape != (4, 4):
+            raise ValueError("affine debe ser una matriz 4x4.")
+
+    data_for_img = cast(Any, h)
+    if fmt == "nifti":
+        out_img = nib.Nifti1Image(data_for_img, ref_affine)
+    else:
+        out_img = MGHImage(data_for_img, ref_affine)
+
+    nib.save(out_img, output_path)
+    print(f"Volumen Grad-CAM guardado en: {output_path}")
+    return output_path
+
+
 def run_gradcam_on_subject(model_path, aseg_path, orig_path,
-                            class_names=None, save_path=None):
+                            class_names=None, save_path=None, volume_path=None):
     """
     Funcion de alto nivel: carga el modelo, preprocesa la imagen,
     calcula Grad-CAM y visualiza el resultado.
@@ -202,7 +282,9 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
         aseg_path: ruta al aparc.DKTatlas+aseg.deep.mgz
         orig_path: ruta al orig.mgz
         class_names: lista con nombres de clases, ej: ["AD", "MCI"]
-        save_path: si se especifica, guarda la figura
+        save_path: si se especifica, guarda la figura PNG
+        volume_path: si se especifica, guarda el mapa 3D como .nii.gz, .nii, .mgz o .mgh,
+                      reescalado a la rejilla de orig.mgz para poder superponerlo en viewers.
 
     Returns:
         heatmap, predicted_class, probabilities
@@ -218,7 +300,7 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
     TARGET_SHAPE = (100, 100, 100)
 
     print("Cargando modelo...")
-    model = tf.keras.models.load_model(model_path, compile=False)
+    model = keras.models.load_model(model_path, compile=False)
 
     print("Preprocesando imagen...")
     aseg_image = nibabel.load(aseg_path)
@@ -242,13 +324,17 @@ def run_gradcam_on_subject(model_path, aseg_path, orig_path,
     for i, (name, prob) in enumerate(zip(class_names, probabilities)):
         print(f"  {name}: {prob*100:.1f}%")
 
-    visualize_gradcam_slices(
-        image_batch, heatmap,
-        class_names=class_names,
-        predicted_class=predicted_class,
-        probabilities=probabilities,
-        save_path=save_path,
-    )
+    if save_path:
+        visualize_gradcam_slices(
+            image_batch, heatmap,
+            class_names=class_names,
+            predicted_class=predicted_class,
+            probabilities=probabilities,
+            save_path=save_path,
+        )
+
+    if volume_path:
+        save_gradcam_volume(heatmap, volume_path, reference_img=orig_image)
 
     return heatmap, predicted_class, probabilities
 
@@ -262,7 +348,19 @@ if __name__ == "__main__":
     parser.add_argument("--orig", required=True, help="Ruta al orig.mgz")
     parser.add_argument("--classes", default="AD,MCI", help="Nombres de clases separados por coma")
     parser.add_argument("--save", default=None, help="Ruta para guardar la figura")
+    parser.add_argument(
+        "--volume",
+        default=None,
+        help="Ruta para guardar el mapa Grad-CAM 3D (.nii.gz, .nii, .mgz, .mgh)",
+    )
     args = parser.parse_args()
 
     class_names = args.classes.split(",")
-    run_gradcam_on_subject(args.model, args.aseg, args.orig, class_names, args.save)
+    run_gradcam_on_subject(
+        args.model,
+        args.aseg,
+        args.orig,
+        class_names,
+        save_path=args.save,
+        volume_path=args.volume,
+    )

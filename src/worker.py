@@ -64,6 +64,13 @@ MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minio123")
 MINIO_INPUT_BUCKET = os.environ.get("MINIO_INPUT_BUCKET", "mri-files")
 MINIO_HEATMAP_BUCKET = os.environ.get("MINIO_HEATMAP_BUCKET", "heatmaps")
+HEATMAP_VOLUME_EXT = os.environ.get("HEATMAP_VOLUME_EXT", "nii.gz").lstrip(".")
+_VOLUME_CONTENT_TYPES = {
+    "nii.gz": "application/gzip",
+    "nii": "application/octet-stream",
+    "mgz": "application/gzip",
+    "mgh": "application/octet-stream",
+}
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ["SUPABASE_ANON_KEY"]
@@ -388,40 +395,69 @@ def process_message(body: bytes) -> None:
             prediction_payload["probabilities"],
         )
 
-        # ---- 4. Heatmap (best-effort) ----
+        # ---- 4. Heatmap volume (best-effort) ----
         heatmap_db_path: str | None = None
         try:
             from explainability.gradcam import run_gradcam_on_subject
 
             gradcam_model = MODEL_AD_PATH if MODEL_MODE == "ovr" else MODEL_PATH
-            heatmap_local = os.path.join(temp_dir, f"{estudio_id}_heatmap.png")
+            volume_filename = f"{estudio_id}_heatmap.{HEATMAP_VOLUME_EXT}"
+            volume_local = os.path.join(temp_dir, volume_filename)
             try:
                 run_gradcam_on_subject(
                     gradcam_model,
                     aseg_path,
                     orig_path,
                     class_names=result["class_names"],
-                    save_path=heatmap_local,
+                    save_path=None,
+                    volume_path=volume_local,
                 )
             except SystemExit:
                 raise RuntimeError("GradCAM generation terminated unexpectedly")
 
-            if os.path.isfile(heatmap_local):
-                heatmap_object_key = f"{estudio_id}_heatmap.png"
+            if os.path.isfile(volume_local):
+                content_type = _VOLUME_CONTENT_TYPES.get(
+                    HEATMAP_VOLUME_EXT, "application/octet-stream"
+                )
                 minio_client.upload_file(
                     MINIO_HEATMAP_BUCKET,
-                    heatmap_object_key,
-                    heatmap_local,
-                    content_type="image/png",
+                    volume_filename,
+                    volume_local,
+                    content_type=content_type,
                 )
-                heatmap_db_path = f"heatmaps/{heatmap_object_key}"
-                logger.info("Heatmap uploaded: %s", heatmap_db_path)
+                heatmap_db_path = f"{MINIO_HEATMAP_BUCKET}/{volume_filename}"
+                logger.info("Heatmap volume uploaded: %s", heatmap_db_path)
         except Exception:
-            logger.warning("Heatmap generation/upload failed (non-fatal)", exc_info=True)
+            logger.warning(
+                "Heatmap volume generation/upload failed (non-fatal)",
+                exc_info=True,
+            )
 
-        # ---- 5. Persist to Supabase ----
+        # ---- 5. Base T1 (orig.mgz) for overlay (best-effort) ----
+        orig_db_path: str | None = None
+        try:
+            if os.path.isfile(orig_path):
+                orig_object_key = f"{estudio_id}_orig.mgz"
+                minio_client.upload_file(
+                    MINIO_HEATMAP_BUCKET,
+                    orig_object_key,
+                    orig_path,
+                    content_type="application/gzip",
+                )
+                orig_db_path = f"{MINIO_HEATMAP_BUCKET}/{orig_object_key}"
+                logger.info("Base T1 uploaded: %s", orig_db_path)
+        except Exception:
+            logger.warning(
+                "Base T1 upload failed (non-fatal)",
+                exc_info=True,
+            )
+
+        # ---- 6. Persist to Supabase ----
         supabase_client.upsert_resultado(
-            estudio_id, prediction_payload, heatmap_db_path
+            estudio_id,
+            prediction_payload,
+            heatmap_path=heatmap_db_path,
+            orig_path=orig_db_path,
         )
 
         logger.info("✔ DONE estudio_id=%s", estudio_id)
@@ -451,7 +487,13 @@ def main() -> None:
     logger.info("  MRI Processing Worker")
     logger.info("=" * 60)
     logger.info("RabbitMQ : %s:%s  queue=%s", RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_QUEUE)
-    logger.info("MinIO    : %s  input=%s  heatmaps=%s", MINIO_ENDPOINT, MINIO_INPUT_BUCKET, MINIO_HEATMAP_BUCKET)
+    logger.info(
+        "MinIO    : %s  input=%s  heatmaps=%s  volume_ext=%s",
+        MINIO_ENDPOINT,
+        MINIO_INPUT_BUCKET,
+        MINIO_HEATMAP_BUCKET,
+        HEATMAP_VOLUME_EXT,
+    )
     logger.info("Supabase : %s", SUPABASE_URL)
     if MODEL_MODE == "ovr":
         logger.info("Model(OvR): AD=%s  MCI=%s  CN=%s", MODEL_AD_PATH, MODEL_MCI_PATH, MODEL_CN_PATH)
