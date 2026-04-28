@@ -74,14 +74,35 @@ def compute_gradcam_3d(model, image_array, class_idx=None, conv_layer_name=None)
     if conv_layer_name is None:
         conv_layer_name = get_last_conv_layer_name(model)
 
+    # En Keras 3, `model.inputs` siempre es una lista. Si es un solo tensor,
+    # lo desempacamos para que el grad_model espere un tensor crudo y no una
+    # estructura tipo lista/dict (evita el UserWarning de "structure of inputs").
+    model_inputs = model.inputs[0] if len(model.inputs) == 1 else model.inputs
+    model_output = model.outputs[0] if len(model.outputs) == 1 else model.output
+
     # Modelo que da los feature maps de la capa conv + la prediccion final
     grad_model = keras.models.Model(
-        inputs=model.inputs,
-        outputs=[model.get_layer(conv_layer_name).output, model.output],
+        inputs=model_inputs,
+        outputs=[model.get_layer(conv_layer_name).output, model_output],
     )
 
+    image_tensor = tf.convert_to_tensor(image_array, dtype=tf.float32)
+
     with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(image_array, training=False)
+        outputs = grad_model(image_tensor, training=False)
+
+        # Keras 3 a veces envuelve cada salida en una lista; desempaquetar
+        # defensivamente para que `predictions` sea un tensor 2D (batch, classes).
+        if isinstance(outputs, (list, tuple)) and len(outputs) == 2:
+            conv_outputs, predictions = outputs
+        else:
+            raise RuntimeError(
+                f"grad_model devolvio una estructura inesperada: {type(outputs)}"
+            )
+        if isinstance(conv_outputs, (list, tuple)):
+            conv_outputs = conv_outputs[0]
+        if isinstance(predictions, (list, tuple)):
+            predictions = predictions[0]
 
         probabilities = predictions[0].numpy()
         predicted_class = int(np.argmax(probabilities))
