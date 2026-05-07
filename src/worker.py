@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from typing import Any
 
 # Force non-interactive matplotlib backend before any library imports it.
@@ -64,7 +65,9 @@ MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minio")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minio123")
 MINIO_INPUT_BUCKET = os.environ.get("MINIO_INPUT_BUCKET", "mri-files")
 MINIO_HEATMAP_BUCKET = os.environ.get("MINIO_HEATMAP_BUCKET", "heatmaps")
+MINIO_REPORT_BUCKET = os.environ.get("MINIO_REPORT_BUCKET", "reports")
 HEATMAP_VOLUME_EXT = os.environ.get("HEATMAP_VOLUME_EXT", "nii.gz").lstrip(".")
+REPORT_NUM_SLICES = int(os.environ.get("REPORT_NUM_SLICES", "5"))
 _VOLUME_CONTENT_TYPES = {
     "nii.gz": "application/gzip",
     "nii": "application/octet-stream",
@@ -397,6 +400,7 @@ def process_message(body: bytes) -> None:
 
         # ---- 4. Heatmap volume (best-effort) ----
         heatmap_db_path: str | None = None
+        volume_local: str | None = None
         try:
             from explainability.gradcam import run_gradcam_on_subject
 
@@ -452,12 +456,53 @@ def process_message(body: bytes) -> None:
                 exc_info=True,
             )
 
-        # ---- 6. Persist to Supabase ----
+        # ---- 6. PDF report (best-effort) ----
+        report_db_path: str | None = None
+        try:
+            from report.pdf_report import generate_pdf_report
+
+            report_filename = f"{estudio_id}_report.pdf"
+            report_local = os.path.join(temp_dir, report_filename)
+
+            # volume_local existe solo si Grad-CAM se genero correctamente.
+            heatmap_local_for_pdf: str | None = (
+                volume_local
+                if volume_local is not None and os.path.isfile(volume_local)
+                else None
+            )
+
+            generate_pdf_report(
+                estudio_id=estudio_id,
+                prediction=prediction_payload,
+                orig_path=orig_path,
+                heatmap_volume_path=heatmap_local_for_pdf,
+                output_pdf_path=report_local,
+                num_slices=REPORT_NUM_SLICES,
+                processing_date=datetime.now(),
+            )
+
+            if os.path.isfile(report_local):
+                minio_client.upload_file(
+                    MINIO_REPORT_BUCKET,
+                    report_filename,
+                    report_local,
+                    content_type="application/pdf",
+                )
+                report_db_path = f"{MINIO_REPORT_BUCKET}/{report_filename}"
+                logger.info("PDF report uploaded: %s", report_db_path)
+        except Exception:
+            logger.warning(
+                "PDF report generation/upload failed (non-fatal)",
+                exc_info=True,
+            )
+
+        # ---- 7. Persist to Supabase ----
         supabase_client.upsert_resultado(
             estudio_id,
             prediction_payload,
             heatmap_path=heatmap_db_path,
             orig_path=orig_db_path,
+            report_path=report_db_path,
         )
 
         logger.info("✔ DONE estudio_id=%s", estudio_id)
@@ -488,10 +533,11 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("RabbitMQ : %s:%s  queue=%s", RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_QUEUE)
     logger.info(
-        "MinIO    : %s  input=%s  heatmaps=%s  volume_ext=%s",
+        "MinIO    : %s  input=%s  heatmaps=%s  reports=%s  volume_ext=%s",
         MINIO_ENDPOINT,
         MINIO_INPUT_BUCKET,
         MINIO_HEATMAP_BUCKET,
+        MINIO_REPORT_BUCKET,
         HEATMAP_VOLUME_EXT,
     )
     logger.info("Supabase : %s", SUPABASE_URL)
@@ -503,6 +549,7 @@ def main() -> None:
     logger.info("=" * 60)
 
     minio_client.ensure_bucket(MINIO_HEATMAP_BUCKET)
+    minio_client.ensure_bucket(MINIO_REPORT_BUCKET)
 
     consumer = RabbitMQConsumer(
         host=RABBITMQ_HOST,

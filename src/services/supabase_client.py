@@ -32,6 +32,7 @@ class SupabaseClient:
         prediction: dict,
         heatmap_path: str | None = None,
         orig_path: str | None = None,
+        report_path: str | None = None,
     ) -> None:
         """Insert or upsert a row in the ``resultado`` table.
 
@@ -50,6 +51,8 @@ class SupabaseClient:
             payload["heatmap_path"] = heatmap_path
         if orig_path is not None:
             payload["orig_path"] = orig_path
+        if report_path is not None:
+            payload["report_path"] = report_path
 
         headers = {
             **self._headers,
