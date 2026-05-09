@@ -67,7 +67,7 @@ MINIO_INPUT_BUCKET = os.environ.get("MINIO_INPUT_BUCKET", "mri-files")
 MINIO_HEATMAP_BUCKET = os.environ.get("MINIO_HEATMAP_BUCKET", "heatmaps")
 MINIO_REPORT_BUCKET = os.environ.get("MINIO_REPORT_BUCKET", "reports")
 HEATMAP_VOLUME_EXT = os.environ.get("HEATMAP_VOLUME_EXT", "nii.gz").lstrip(".")
-REPORT_NUM_SLICES = int(os.environ.get("REPORT_NUM_SLICES", "5"))
+REPORT_SLICES_PER_SIDE = int(os.environ.get("REPORT_SLICES_PER_SIDE", "3"))
 _VOLUME_CONTENT_TYPES = {
     "nii.gz": "application/gzip",
     "nii": "application/octet-stream",
@@ -477,7 +477,7 @@ def process_message(body: bytes) -> None:
                 orig_path=orig_path,
                 heatmap_volume_path=heatmap_local_for_pdf,
                 output_pdf_path=report_local,
-                num_slices=REPORT_NUM_SLICES,
+                num_slices_per_side=REPORT_SLICES_PER_SIDE,
                 processing_date=datetime.now(),
             )
 

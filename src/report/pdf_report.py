@@ -5,8 +5,9 @@ Construye un reporte PDF con el resumen del procesamiento de un estudio MRI:
 
     - Identificacion del estudio y fecha de procesamiento.
     - Clase predicha y probabilidades por clase.
-    - 5 cortes axiales del volumen MRI original (orig.mgz).
-    - 5 cortes axiales con el heatmap Grad-CAM superpuesto sobre el volumen.
+    - 6 cortes sagitales (3 por hemisferio) con el heatmap Grad-CAM
+      superpuesto sobre el volumen T1 (orig.mgz). Se omite el corte
+      interhemisferico (linea media) y los cortes muy laterales (borde).
 
 USO:
     from report.pdf_report import generate_pdf_report
@@ -22,7 +23,7 @@ USO:
         orig_path="/path/to/orig.mgz",
         heatmap_volume_path="/path/to/heatmap.nii.gz",   # opcional
         output_pdf_path="/path/to/report.pdf",
-        num_slices=5,
+        num_slices_per_side=3,
     )
 """
 
@@ -92,51 +93,98 @@ def _normalize_unit(arr: np.ndarray) -> np.ndarray:
     return np.zeros_like(arr, dtype=np.float32)
 
 
-def _select_slice_indices(depth: int, num_slices: int) -> np.ndarray:
-    # Cortes equiespaciados en el cuarto central, donde se ve mejor el cerebro.
-    lo = max(depth // 4, 0)
-    hi = min(3 * depth // 4, depth - 1)
-    if hi <= lo:
-        return np.linspace(0, max(depth - 1, 0), num_slices, dtype=int)
-    return np.linspace(lo, hi, num_slices, dtype=int)
+def _select_sagittal_indices(
+    width: int,
+    num_per_side: int = 3,
+    *,
+    inner_margin_frac: float = 0.06,
+    outer_margin_frac: float = 0.22,
+) -> list[int]:
+    """Devuelve ``2 * num_per_side`` indices de cortes sagitales.
+
+    Mitad de los cortes quedan a un lado de la linea media y la otra mitad
+    al lado opuesto. Se evita la zona interhemisferica (linea media) y los
+    cortes muy cercanos al borde lateral del volumen para no caer fuera del
+    cerebro.
+
+    Args:
+        width: tamano del eje sagital (eje 0 del volumen).
+        num_per_side: cantidad de cortes por hemisferio (default 3).
+        inner_margin_frac: fraccion del ancho a saltar a cada lado de la
+            linea media para evitar el corte interhemisferico.
+        outer_margin_frac: fraccion del ancho a saltar desde cada borde
+            lateral del volumen para no caer fuera del cerebro.
+    """
+    if width < 4 or num_per_side < 1:
+        return list(range(min(width, max(num_per_side * 2, 1))))
+
+    center = width // 2
+    inner_margin = max(int(round(width * inner_margin_frac)), 1)
+    outer_margin = max(int(round(width * outer_margin_frac)), 1)
+
+    left_lo = outer_margin
+    left_hi = max(center - inner_margin, left_lo + 1)
+    right_hi = max(width - 1 - outer_margin, left_hi + 1)
+    right_lo = min(center + inner_margin, right_hi - 1)
+
+    left_indices = np.linspace(left_lo, left_hi, num_per_side, dtype=int)
+    right_indices = np.linspace(right_lo, right_hi, num_per_side, dtype=int)
+    return [int(i) for i in left_indices] + [int(i) for i in right_indices]
 
 
 # ---------------------------------------------------------------------------
 # Construccion de figuras matplotlib -> PNG bytes
 # ---------------------------------------------------------------------------
 
-def _build_slice_figure(
+def _build_sagittal_grid_figure(
     volume: np.ndarray,
+    overlay: np.ndarray,
     *,
-    overlay: np.ndarray | None = None,
-    num_slices: int = 5,
+    num_per_side: int = 3,
     title: str = "",
     cmap: str = "gray",
     overlay_cmap: str = "jet",
     overlay_alpha: float = 0.45,
 ) -> bytes:
-    """Devuelve un PNG (bytes) con `num_slices` cortes axiales del volumen.
+    """PNG (bytes) con una rejilla 2x``num_per_side`` de cortes sagitales.
 
-    Si se pasa `overlay`, este se superpone con transparencia. Tanto volume
-    como overlay deben tener la misma forma 3D (D, H, W).
+    La fila superior corresponde a un hemisferio y la inferior al opuesto.
+    El ``overlay`` (heatmap Grad-CAM) se superpone con transparencia sobre
+    todos los cortes. Tanto ``volume`` como ``overlay`` deben tener la
+    misma forma 3D ``(D, H, W)`` donde ``D`` es el eje sagital.
     """
     if volume.ndim != 3:
         raise ValueError(f"volume debe ser 3D, shape={volume.shape}")
+    if overlay.shape != volume.shape:
+        raise ValueError(
+            f"overlay debe tener la misma forma que volume "
+            f"(volume={volume.shape}, overlay={overlay.shape})"
+        )
 
-    depth = volume.shape[2]
-    indices = _select_slice_indices(depth, num_slices)
+    sagittal_axis = volume.shape[0]
+    indices = _select_sagittal_indices(sagittal_axis, num_per_side=num_per_side)
+    left_indices = indices[:num_per_side]
+    right_indices = indices[num_per_side:]
 
-    fig, axes = plt.subplots(1, num_slices, figsize=(num_slices * 2.6, 2.9))
-    if num_slices == 1:
-        axes = [axes]
+    fig, axes = plt.subplots(
+        2,
+        num_per_side,
+        figsize=(num_per_side * 2.6, 2 * 2.9),
+    )
+    if num_per_side == 1:
+        axes = np.array(axes).reshape(2, 1)
 
-    for ax, idx in zip(axes, indices):
-        slc = np.rot90(volume[:, :, int(idx)])
-        slc_norm = _normalize_unit(slc)
-        ax.imshow(slc_norm, cmap=cmap)
+    side_labels = ("Hemisferio izq.", "Hemisferio der.")
+    for row, (label, row_indices) in enumerate(
+        zip(side_labels, (left_indices, right_indices))
+    ):
+        for col, idx in enumerate(row_indices):
+            ax = axes[row, col]
+            slc = np.rot90(volume[int(idx), :, :])
+            slc_norm = _normalize_unit(slc)
+            ax.imshow(slc_norm, cmap=cmap)
 
-        if overlay is not None:
-            heat = np.rot90(overlay[:, :, int(idx)])
+            heat = np.rot90(overlay[int(idx), :, :])
             ax.imshow(
                 heat,
                 cmap=overlay_cmap,
@@ -145,8 +193,21 @@ def _build_slice_figure(
                 vmax=1.0,
             )
 
-        ax.set_title(f"Corte {int(idx)}", fontsize=9)
-        ax.axis("off")
+            ax.set_title(f"Corte sagital {int(idx)}", fontsize=9)
+            ax.axis("off")
+
+            if col == 0:
+                ax.text(
+                    -0.08,
+                    0.5,
+                    label,
+                    transform=ax.transAxes,
+                    rotation=90,
+                    ha="center",
+                    va="center",
+                    fontsize=9,
+                    color="#374151",
+                )
 
     if title:
         fig.suptitle(title, fontsize=11, fontweight="bold")
@@ -187,7 +248,7 @@ def generate_pdf_report(
     orig_path: str,
     heatmap_volume_path: str | None,
     output_pdf_path: str,
-    num_slices: int = 5,
+    num_slices_per_side: int = 3,
     processing_date: datetime | None = None,
 ) -> str:
     """Genera el PDF de resultados y devuelve su ruta absoluta.
@@ -200,12 +261,14 @@ def generate_pdf_report(
         orig_path: ruta al volumen ``orig.mgz`` (T1 reconstruido).
         heatmap_volume_path: ruta al volumen Grad-CAM (NIfTI/MGZ) ya
             registrado en la rejilla de orig.mgz. Si es None o no existe,
-            el PDF incluye solo los cortes anatomicos.
+            el PDF incluye solo los cortes anatomicos sin heatmap.
         output_pdf_path: ruta donde guardar el PDF.
-        num_slices: numero de cortes axiales a embeber (default 5).
+        num_slices_per_side: numero de cortes sagitales por hemisferio
+            (default 3, total 6).
         processing_date: marca temporal; si es None se usa ``datetime.now()``.
     """
     processing_date = processing_date or datetime.now()
+    num_slices_per_side = max(int(num_slices_per_side), 1)
 
     # ---- Cargar volumenes ---------------------------------------------------
     orig_volume = _load_volume_3d(orig_path)
@@ -225,20 +288,14 @@ def generate_pdf_report(
             )
             heatmap_volume = None
 
-    # ---- Render de las dos figuras de cortes -------------------------------
-    volume_png = _build_slice_figure(
-        orig_volume,
-        num_slices=num_slices,
-        title="Volumen MRI - Cortes axiales",
-    )
-
+    # ---- Render de la figura de cortes -------------------------------------
     gradcam_png: bytes | None = None
     if heatmap_volume is not None:
-        gradcam_png = _build_slice_figure(
+        gradcam_png = _build_sagittal_grid_figure(
             orig_volume,
-            overlay=heatmap_volume,
-            num_slices=num_slices,
-            title="Mapa de calor (Grad-CAM) sobre el volumen",
+            heatmap_volume,
+            num_per_side=num_slices_per_side,
+            title="Cortes sagitales con mapa de calor (Grad-CAM)",
         )
 
     # ---- Construccion del PDF ---------------------------------------------
@@ -381,25 +438,18 @@ def generate_pdf_report(
         story.append(Paragraph("Probabilidades por clase", h2))
         story.append(prob_table)
 
-    # ---- Visualizaciones --------------------------------------------------
-    story.append(Paragraph("Visualizacion del volumen", h2))
-    story.append(
-        Paragraph(
-            f"Se muestran {num_slices} cortes axiales del volumen T1 "
-            "reconstruido (orig.mgz).",
-            body,
-        )
-    )
-    story.append(Spacer(1, 4))
-    story.append(_image_from_png_bytes(volume_png, max_width=17 * cm))
-
+    # ---- Visualizacion: cortes sagitales con Grad-CAM ---------------------
+    total_slices = num_slices_per_side * 2
     story.append(Paragraph("Mapa de calor (Grad-CAM)", h2))
     if gradcam_png is not None:
         story.append(
             Paragraph(
-                f"Los mismos {num_slices} cortes con la activacion del modelo "
-                "superpuesta. Las regiones mas calidas (rojo) indican mayor "
-                "contribucion a la decision de la clase predicha.",
+                f"Se muestran {total_slices} cortes sagitales del volumen T1 "
+                f"reconstruido (orig.mgz): {num_slices_per_side} por hemisferio, "
+                "evitando la linea media y los bordes laterales. Sobre cada "
+                "corte se superpone la activacion del modelo; las regiones "
+                "mas calidas (rojo) indican mayor contribucion a la decision "
+                "de la clase predicha.",
                 body,
             )
         )
