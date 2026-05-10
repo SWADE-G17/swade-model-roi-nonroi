@@ -98,7 +98,7 @@ def _select_sagittal_indices(
     num_per_side: int = 3,
     *,
     inner_margin_frac: float = 0.06,
-    outer_margin_frac: float = 0.22,
+    outer_margin_frac: float = 0.30,
 ) -> list[int]:
     """Devuelve ``2 * num_per_side`` indices de cortes sagitales.
 
@@ -174,17 +174,20 @@ def _build_sagittal_grid_figure(
     if num_per_side == 1:
         axes = np.array(axes).reshape(2, 1)
 
-    side_labels = ("Hemisferio izq.", "Hemisferio der.")
+    side_labels = ("Hemisferio der.", "Hemisferio izq.")
     for row, (label, row_indices) in enumerate(
         zip(side_labels, (left_indices, right_indices))
     ):
         for col, idx in enumerate(row_indices):
             ax = axes[row, col]
-            slc = np.rot90(volume[int(idx), :, :])
+            # orig.mgz (LIA): eje 1 va Superior->Inferior y eje 2 va
+            # Posterior->Anterior, por lo que sin rotacion imshow ya
+            # muestra craneo arriba y cara a la derecha.
+            slc = volume[int(idx), :, :]
             slc_norm = _normalize_unit(slc)
             ax.imshow(slc_norm, cmap=cmap)
 
-            heat = np.rot90(overlay[int(idx), :, :])
+            heat = overlay[int(idx), :, :]
             ax.imshow(
                 heat,
                 cmap=overlay_cmap,
