@@ -80,28 +80,63 @@ class SupabaseClient:
         response.raise_for_status()
         logger.info("Updated estudio id=%s status=%s", estudio_id, status)
 
-    def update_resultado_error(
+    def update_estudio_error(
         self,
         estudio_id: Any,
         error_message: str,
     ) -> None:
-        """Optionally mark a ``resultado`` row with an error status."""
-        url = (
-            f"{self._base_url}/rest/v1/resultado"
-            f"?estudio_id=eq.{estudio_id}"
-        )
+        """Mark an ``estudio`` row as failed.
+
+        Sets ``status = 'error'`` and stores the human-readable cause in
+        ``error_message``. Uses ``Prefer: count=exact`` so we can detect
+        (and loudly warn) when the row id does not exist instead of
+        silently returning 204 with zero rows affected.
+        """
+        url = f"{self._base_url}/rest/v1/estudio?id=eq.{estudio_id}"
         payload = {
-            "prediction": {"error": error_message},
+            "status": "error",
+            "error_message": error_message,
         }
-        headers = {**self._headers, "Prefer": "return=minimal"}
+        headers = {
+            **self._headers,
+            "Prefer": "return=minimal,count=exact",
+        }
 
         try:
             response = httpx.patch(url, json=payload, headers=headers, timeout=_TIMEOUT)
             response.raise_for_status()
-            logger.info("Recorded error state for estudio_id=%s", estudio_id)
         except Exception:
             logger.warning(
-                "Could not record error state for estudio_id=%s",
+                "Could not record error state for estudio id=%s",
                 estudio_id,
                 exc_info=True,
             )
+            return
+
+        affected = _affected_rows(response.headers.get("content-range"))
+        if affected == 0:
+            logger.warning(
+                "PATCH estudio id=%s affected 0 rows (row not found?)",
+                estudio_id,
+            )
+            return
+
+        logger.info(
+            "Recorded error state for estudio id=%s (rows=%s)",
+            estudio_id,
+            "?" if affected is None else affected,
+        )
+
+
+def _affected_rows(content_range: str | None) -> int | None:
+    """Parse PostgREST's ``Content-Range`` header (e.g. ``0-0/1`` or ``*/0``).
+
+    Returns the total rows affected, or ``None`` if the header is missing
+    or unparseable.
+    """
+    if not content_range or "/" not in content_range:
+        return None
+    try:
+        return int(content_range.rsplit("/", 1)[1])
+    except ValueError:
+        return None

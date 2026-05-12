@@ -507,15 +507,17 @@ def process_message(body: bytes) -> None:
 
         logger.info("✔ DONE estudio_id=%s", estudio_id)
 
-    except Exception:
+    except Exception as exc:
         logger.error("✘ FAILED estudio_id=%s", estudio_id, exc_info=True)
+        error_message = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
         try:
-            supabase_client.update_resultado_error(
-                estudio_id,
-                "Processing failed — check worker logs for details.",
-            )
+            supabase_client.update_estudio_error(estudio_id, error_message)
         except Exception:
-            pass
+            logger.warning(
+                "Failed to persist error state for estudio_id=%s",
+                estudio_id,
+                exc_info=True,
+            )
         raise  # propagate so the consumer NACKs the message
 
     finally:
