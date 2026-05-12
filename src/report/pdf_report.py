@@ -98,7 +98,7 @@ def _select_sagittal_indices(
     num_per_side: int = 3,
     *,
     inner_margin_frac: float = 0.06,
-    outer_margin_frac: float = 0.30,
+    outer_margin_frac: float = 0.35,
 ) -> list[int]:
     """Devuelve ``2 * num_per_side`` indices de cortes sagitales.
 
