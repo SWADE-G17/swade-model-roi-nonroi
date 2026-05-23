@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+src/inference/model_ADNI_AD_vs_rest.h5
+src/inference/model_ADNI_CN_vs_rest.h5
+src/inference/model_ADNI_MCI_vs_rest.h5
